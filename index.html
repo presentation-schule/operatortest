@@ -473,7 +473,7 @@
       return bytes;
     }
 
-    async function deriveAesKey(password, salt) {
+    async function deriveAesKey(password, salt, iterations = PBKDF2_ITERATIONS) {
       const keyMaterial = await crypto.subtle.importKey(
         "raw",
         encoder.encode(password),
@@ -486,7 +486,7 @@
         {
           name: "PBKDF2",
           salt,
-          iterations: PBKDF2_ITERATIONS,
+          iterations,
           hash: "SHA-256"
         },
         keyMaterial,
@@ -499,10 +499,25 @@
       );
     }
 
+    function normalizeJsonInput(input) {
+      return input
+        .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .trim();
+    }
+
+    function parseEncryptedPackage(input) {
+      try {
+        return JSON.parse(normalizeJsonInput(input));
+      } catch (error) {
+        throw new Error("Der eingefügte Text ist kein gültiger JSON-Text. Häufige Ursache: geschützte Leerzeichen aus Chat-/Messenger-Apps.");
+      }
+    }
+
     async function encryptJson(data, password) {
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const aesKey = await deriveAesKey(password, salt);
+      const aesKey = await deriveAesKey(password, salt, PBKDF2_ITERATIONS);
       const plaintext = encoder.encode(JSON.stringify(data, null, 2));
       const ciphertext = await crypto.subtle.encrypt(
         {
@@ -531,10 +546,11 @@
         throw new Error("Ungültiger oder nicht unterstützter Output.");
       }
 
+      const iterations = Number(encryptedPackage.iterations || PBKDF2_ITERATIONS);
       const salt = base64ToBytes(encryptedPackage.salt);
       const iv = base64ToBytes(encryptedPackage.iv);
       const ciphertext = base64ToBytes(encryptedPackage.ciphertext);
-      const aesKey = await deriveAesKey(password, salt);
+      const aesKey = await deriveAesKey(password, salt, iterations);
 
       const plaintextBuffer = await crypto.subtle.decrypt(
         {
@@ -778,12 +794,12 @@
       }
 
       try {
-        const encryptedPackage = JSON.parse(input);
+        const encryptedPackage = parseEncryptedPackage(input);
         const decrypted = await decryptJson(encryptedPackage, key);
         showStatus(adminStatus, "Output erfolgreich entschlüsselt.", "ok");
         renderDecryptedResult(decrypted);
       } catch (error) {
-        showStatus(adminStatus, "Entschlüsselung fehlgeschlagen. Prüfe Key und JSON-Output.", "err");
+        showStatus(adminStatus, "Entschlüsselung fehlgeschlagen: " + error.message, "err");
       }
     });
 
